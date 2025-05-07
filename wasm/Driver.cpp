@@ -464,6 +464,7 @@ static void createSyntheticSymbols() {
                                                             true};
 
   static WasmSignature entrySignature = config->otherModel ? nullSignature : WasmSignature{{}, {ValType::I64, ValType::I64, ValType::I64}};
+  static WasmSignature syncCallSignature = WasmSignature{{}, {ValType::I64, ValType::I64, ValType::I32}}; // sender, recever, data_size
 
   if (!config->relocatable) {
     WasmSym::callCtors = symtab->addSyntheticFunction(
@@ -473,6 +474,10 @@ static void createSyntheticSymbols() {
     WasmSym::entryFunc = symtab->addSyntheticFunction(
           config->entry, WASM_SYMBOL_VISIBILITY_DEFAULT | WASM_SYMBOL_BINDING_WEAK,
           make<SyntheticFunction>(entrySignature, config->entry));
+
+    WasmSym::syncCallFunc = symtab->addSyntheticFunction(
+          "sync_call", WASM_SYMBOL_VISIBILITY_DEFAULT | WASM_SYMBOL_BINDING_WEAK,
+          make<SyntheticFunction>(syncCallSignature, "sync_call"));
 
     if (config->passiveSegments) {
       // Passive segments are used to avoid memory being reinitialized on each

@@ -63,6 +63,7 @@ private:
   void createCallCtorsFunction();
   void createInitTLSFunction();
   void createDispatchFunction();
+  void createCallDispatchFunction();
 
   void assignIndexes();
   void populateSymtab();
@@ -624,8 +625,9 @@ void Writer::assignIndexes() {
   // global are effected by the number of imports.
   out.importSec->seal();
 
-  for (InputFunction *func : symtab->syntheticFunctions)
+  for (InputFunction *func : symtab->syntheticFunctions) {
     out.functionSec->addFunction(func);
+  }
 
   for (ObjFile *file : symtab->objectFiles) {
     LLVM_DEBUG(dbgs() << "Functions: " << file->getName() << "\n");
@@ -713,6 +715,7 @@ static constexpr uint64_t EOSIO_COMPILER_ERROR_BASE = 8000000000000000000ull;
 static constexpr uint64_t EOSIO_ERROR_NO_ACTION     = EOSIO_COMPILER_ERROR_BASE;
 static constexpr uint64_t EOSIO_ERROR_ONERROR       = EOSIO_COMPILER_ERROR_BASE+1;
 static constexpr uint64_t EOSIO_CANARY_FAILURE      = EOSIO_COMPILER_ERROR_BASE+2;
+static constexpr uint64_t EOSIO_ERROR_NO_CALL       = EOSIO_COMPILER_ERROR_BASE+3;
 
 static void createFunction(DefinedFunction *func, StringRef bodyContent) {
   std::string functionBody;
@@ -1249,6 +1252,190 @@ void Writer::createDispatchFunction() {
    createFunction(WasmSym::entryFunc, BodyContent);
 };
 
+// Generate sync_call entry function
+// The parameters of sync_call() is `sender`, `receiver`, `data_size`
+void Writer::createCallDispatchFunction() {
+   // Generate an `if` block for each method marked as `call`
+   auto create_if = [&](raw_string_ostream& os, std::string str, bool& need_else) {
+      if (need_else) {
+         writeU8(os, OPCODE_ELSE, "ELSE");
+      }
+      need_else = true;
+
+      // Retrieve the called function name from payload data
+      auto get_call_name_sym = (FunctionSymbol*)symtab->find("__eos_get_sync_call_func_name_");
+      uint32_t get_call_name_idx = UINT32_MAX;
+      if (get_call_name_sym) {
+         get_call_name_idx = get_call_name_sym->getFunctionIndex();
+      } else {
+         throw std::runtime_error("wasm_ld internal error: __eos_get_sync_call_func_name_ not found");
+      }
+      writeU8(os, OPCODE_CALL, "CALL");
+      writeUleb128(os, get_call_name_idx, "get_call_name_idx");
+
+      // Generate code to compare called function name with the function in `str`
+      uint64_t nm = eosio::cdt::string_to_name(str.substr(0, str.find(":")).c_str());
+      writeU8(os, OPCODE_I64_CONST, "I64 CONST");
+      encodeSLEB128((int64_t)nm, os);
+      writeU8(os, OPCODE_I64_EQ, "I64_EQ");
+      writeU8(os, OPCODE_IF, "IF call_name == name");
+      writeU8(os, 0x40, "none");  // starts an empty block (does not have a return value)
+
+      // Generate code to call the called function
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 0, "sender");
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 1, "receiver");
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 2, "data_size");
+      writeU8(os, OPCODE_CALL, "CALL");
+      auto func_sym = (FunctionSymbol*)symtab->find(str.substr(str.find(":")+1));
+      uint32_t index = func_sym->getFunctionIndex();
+      if (index >= 0)
+         writeUleb128(os, index, "index");
+      else
+         throw std::runtime_error("wasm_ld internal error function not found");
+   };
+
+   auto assert_sym = (FunctionSymbol*)symtab->find("eosio_assert_code");
+   uint32_t assert_idx = UINT32_MAX;
+   if (assert_sym)
+     assert_idx = assert_sym->getFunctionIndex();
+
+   auto create_call_dispatch = [&](raw_string_ostream& OS) {
+      // count how many total calls we have
+      int call_cnt = 0;
+
+      // create the dispatching for each of the calls
+      std::set<StringRef> has_dispatched;
+      bool need_else = false;
+      for (ObjFile *File : symtab->objectFiles) {
+        if (!File->getEosioCalls().empty()) {
+            for (auto call : File->getEosioCalls()) {
+              if (has_dispatched.insert(call).second) {
+                create_if(OS, call.str(), need_else);
+                call_cnt++;
+              }
+            }
+        }
+      }
+      if (call_cnt == 0) {
+         throw std::runtime_error("wasm_ld internal error: call_cnt must be greater than 0");
+      }
+
+      writeU8(OS, OPCODE_ELSE, "ELSE");
+
+      if (assert_sym && assert_idx < symtab->getSymbols().size()) {
+        // assert that no matching sync call function was found
+        writeU8(OS, OPCODE_I32_CONST, "I32.CONST");
+        writeUleb128(OS, 0, "false");
+        writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
+        encodeSLEB128((int64_t)EOSIO_ERROR_NO_CALL, OS);
+        writeU8(OS, OPCODE_CALL, "CALL");
+        writeUleb128(OS, assert_idx, "code");
+      } else {
+         fatal("fatal failure: contract with no matching sync calls but does not have assert method to report");
+      }
+
+      for (int i=0; i < call_cnt; i++) {
+         writeU8(OS, OPCODE_END, "END");
+      }
+   };
+
+   std::string BodyContent;
+   {
+      raw_string_ostream OS(BodyContent);
+      writeUleb128(OS, 0, "num locals");
+
+      auto contract_sym = (FunctionSymbol*)symtab->find("eosio_set_contract_name");
+      uint32_t contract_idx = contract_sym->getFunctionIndex();
+      writeU8(OS, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(OS, 1, "receiver");
+      writeU8(OS, OPCODE_CALL, "CALL");
+      writeUleb128(OS, contract_idx, "eosio_set_contract_name");
+
+      // create ctors call
+      auto ctors_sym = (FunctionSymbol*)symtab->find("__wasm_call_ctors");
+      if (ctors_sym) {
+         uint32_t ctors_idx = ctors_sym->getFunctionIndex();
+         if (ctors_idx != 0) {
+            writeU8(OS, OPCODE_CALL, "CALL");
+            writeUleb128(OS, ctors_idx, "__wasm_call_ctors");
+         }
+      }
+
+      if (config->stackCanary) {
+          auto gsym = (GlobalSymbol*)symtab->find("__stack_canary");
+          auto time_sym = (FunctionSymbol*)symtab->find("current_time");
+          uint32_t time_idx = UINT32_MAX;
+          if (time_sym)
+             time_idx = time_sym->getFunctionIndex();
+          else
+             fatal("internal error, current_time not found");
+
+          writeU8(OS, OPCODE_CALL, "CALL");
+          writeU8(OS, time_idx, "current_time");
+          writeU8(OS, OPCODE_SET_GLOBAL, "SET_GLOBAL");
+          writeUleb128(OS, gsym->getGlobalIndex(), "__stack_canary");
+
+          auto desym = (GlobalSymbol*)symtab->find("__data_end");
+          writeU8(OS, OPCODE_I32_CONST, "i32.const");
+          writeUleb128(OS, desym->getGlobalIndex() + 8, "__data_end + 8"); // add 8 bytes to __data_end to be in the stack area
+
+          writeU8(OS, OPCODE_GET_GLOBAL, "GET_GLOBAL");
+          writeUleb128(OS, gsym->getGlobalIndex(), "__stack_canary");
+
+          writeU8(OS, OPCODE_I64_STORE, "i64.store");
+          writeUleb128(OS, 3, "align=8");
+          writeUleb128(OS, 0, "offset=0");
+      }
+
+      // create the preamble for `sync_call`
+      create_call_dispatch(OS);
+
+      if (config->stackCanary) {
+        auto gsym = (GlobalSymbol*)symtab->find("__stack_canary");
+        auto desym = (GlobalSymbol*)symtab->find("__data_end");
+
+        writeU8(OS, OPCODE_GET_GLOBAL, "GET_GLOBAL");
+        writeUleb128(OS, gsym->getGlobalIndex(), "GET_GLOBAL");
+
+        writeU8(OS, OPCODE_I32_CONST, "i32.const");
+        writeUleb128(OS, desym->getGlobalIndex() + 8, "__data_end + 8");
+        
+        writeU8(OS, OPCODE_I64_LOAD, "i64.load");
+        writeUleb128(OS, 3, "align=8");
+        writeUleb128(OS, 0, "offset=0");
+
+        writeU8(OS, OPCODE_I64_NE, "i64.ne");
+        writeU8(OS, OPCODE_IF, "if canary doesn't equal global held canary");
+        writeU8(OS, 0x40, "none");
+
+        auto assert_sym = (FunctionSymbol*)symtab->find("eosio_assert_code");
+        writeU8(OS, OPCODE_I32_CONST, "i32.const");
+        writeUleb128(OS, 0, "false");
+        writeU8(OS, OPCODE_I64_CONST, "i64.const");
+        encodeSLEB128((int64_t)EOSIO_CANARY_FAILURE, OS);
+        writeU8(OS, OPCODE_CALL, "CALL");
+        writeUleb128(OS, assert_sym->getFunctionIndex(), "eosio_assert_code");
+        writeU8(OS, OPCODE_END, "END");
+      }
+      auto dtors_sym = (FunctionSymbol*)symtab->find("__cxa_finalize");
+      if (dtors_sym) {
+         uint32_t dtors_idx = dtors_sym->getFunctionIndex();
+         if (dtors_idx != 0 && dtors_idx < symtab->getSymbols().size()) {
+            writeU8(OS, OPCODE_I32_CONST, "I32.CONST");
+            writeUleb128(OS, (uint32_t)0, "NULL");
+            writeU8(OS, OPCODE_CALL, "CALL");
+            writeUleb128(OS, dtors_idx, "__cxa_finalize");
+         }
+      }
+      writeU8(OS, OPCODE_END, "END");
+   }
+
+   createFunction(WasmSym::syncCallFunc, BodyContent);
+};
+
 void Writer::run(bool undefinedEntry) {
   if (config->relocatable || config->isPic)
     config->globalBase = 0;
@@ -1299,6 +1486,17 @@ void Writer::run(bool undefinedEntry) {
 
   if (!config->otherModel && symtab->entryIsUndefined)
      createDispatchFunction();
+
+  bool hasCalls = false;
+  for (ObjFile *File : symtab->objectFiles) {
+     if (!File->getEosioCalls().empty()) {
+        hasCalls = true;
+        break;
+     }
+  }
+  if (hasCalls) {
+     createCallDispatchFunction(); // sync_call entry function
+  }
 
   if (errorCount())
     return;
