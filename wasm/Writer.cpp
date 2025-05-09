@@ -702,6 +702,7 @@ static constexpr int OPCODE_IF         = 0x4;
 static constexpr int OPCODE_ELSE       = 0x5;
 static constexpr int OPCODE_END        = 0xb;
 static constexpr int OPCODE_GET_LOCAL  = 0x20;
+static constexpr int OPCODE_SET_LOCAL  = 0x21;
 static constexpr int OPCODE_GET_GLOBAL = 0x23;
 static constexpr int OPCODE_SET_GLOBAL = 0x24;
 static constexpr int OPCODE_I64_EQ     = 0x51;
@@ -711,6 +712,7 @@ static constexpr int OPCODE_I64_CONST  = 0x42;
 static constexpr int OPCODE_I64_STORE  = 0x37;
 static constexpr int OPCODE_I64_LOAD   = 0x29;
 static constexpr int OPCODE_I64_ADD    = 0x7c;
+static constexpr int OPCODE_I32_TYPE   = 0x7f;
 static constexpr uint64_t EOSIO_COMPILER_ERROR_BASE = 8000000000000000000ull;
 static constexpr uint64_t EOSIO_ERROR_NO_ACTION     = EOSIO_COMPILER_ERROR_BASE;
 static constexpr uint64_t EOSIO_ERROR_ONERROR       = EOSIO_COMPILER_ERROR_BASE+1;
@@ -1262,7 +1264,24 @@ void Writer::createCallDispatchFunction() {
       }
       need_else = true;
 
-      // Retrieve the called function name from payload data
+      // Retrieve payload data
+      auto get_call_data_sym = (FunctionSymbol*)symtab->find("__eos_get_sync_call_data_");
+      uint32_t get_call_data_idx = UINT32_MAX;
+      if (get_call_data_sym) {
+         get_call_data_idx = get_call_data_sym->getFunctionIndex();
+      } else {
+         throw std::runtime_error("wasm_ld internal error: __eos_get_sync_call_data_ not found");
+      }
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 2, "data_size");
+      writeU8(os, OPCODE_CALL, "CALL");
+      writeUleb128(os, get_call_data_idx, "get_call_data_idx");
+
+      // Store data into local_3
+      writeU8(os, OPCODE_SET_LOCAL, "SET_LOCAL");
+      writeUleb128(os, 3, "data");
+
+      // Find the called function name from payload data
       auto get_call_name_sym = (FunctionSymbol*)symtab->find("__eos_get_sync_call_func_name_");
       uint32_t get_call_name_idx = UINT32_MAX;
       if (get_call_name_sym) {
@@ -1270,6 +1289,8 @@ void Writer::createCallDispatchFunction() {
       } else {
          throw std::runtime_error("wasm_ld internal error: __eos_get_sync_call_func_name_ not found");
       }
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 3, "data");
       writeU8(os, OPCODE_CALL, "CALL");
       writeUleb128(os, get_call_name_idx, "get_call_name_idx");
 
@@ -1288,6 +1309,8 @@ void Writer::createCallDispatchFunction() {
       writeUleb128(os, 1, "receiver");
       writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
       writeUleb128(os, 2, "data_size");
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 3, "data");
       writeU8(os, OPCODE_CALL, "CALL");
       auto func_sym = (FunctionSymbol*)symtab->find(str.substr(str.find(":")+1));
       uint32_t index = func_sym->getFunctionIndex();
@@ -1345,7 +1368,11 @@ void Writer::createCallDispatchFunction() {
    std::string BodyContent;
    {
       raw_string_ostream OS(BodyContent);
-      writeUleb128(OS, 0, "num locals");
+
+      // Declare (local i32), whose index is 3, after parameters sender, receiver, and data_size
+      writeUleb128(OS, 1, "num of local groups");
+      writeUleb128(OS, 1, "num of locals in group 1");
+      writeU8(OS, OPCODE_I32_TYPE, "type of group 1 is i32");
 
       auto contract_sym = (FunctionSymbol*)symtab->find("eosio_set_contract_name");
       uint32_t contract_idx = contract_sym->getFunctionIndex();
