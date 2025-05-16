@@ -121,7 +121,7 @@ void lld::wasm::markLive() {
      if (has_sync_calls) {
         enqueue(WasmSym::syncCallFunc);
         enqueue(symtab->find("__eos_get_sync_call_data_"));
-        enqueue(symtab->find("__eos_get_sync_call_func_name_"));
+        enqueue(symtab->find("__eos_get_sync_call_data_header_"));
      }
 
      for (const auto& import : wasmObj->imports()) {

@@ -464,7 +464,7 @@ static void createSyntheticSymbols() {
                                                             true};
 
   static WasmSignature entrySignature = config->otherModel ? nullSignature : WasmSignature{{}, {ValType::I64, ValType::I64, ValType::I64}};
-  static WasmSignature syncCallSignature = WasmSignature{{}, {ValType::I64, ValType::I64, ValType::I32}}; // sender, recever, data_size
+  static WasmSignature syncCallSignature = WasmSignature{{ValType::I64}, {ValType::I64, ValType::I64, ValType::I32}}; // sender, recever, data_size
 
   if (!config->relocatable) {
     WasmSym::callCtors = symtab->addSyntheticFunction(
