@@ -1311,12 +1311,12 @@ void Writer::createCallDispatchFunction() {
       writeUleb128(os, 0, "offset=0");
 
       // Verify version is correct. Current version is 0.
-      // Return -2 if version is not supported.
+      // Return -10001 if version is not supported.
       writeU8(os, OPCODE_IF, "IF version != 0");  // This block is executed only when the top of statck is non-zero
       writeU8(os, 0x40, "none");
       writeU8(os, OPCODE_I64_CONST, "I64.CONST");
-      encodeSLEB128(-2, os);
-      writeU8(os, OPCODE_RETURN, "RETURN -2");
+      encodeSLEB128(-10001, os);
+      writeU8(os, OPCODE_RETURN, "RETURN -10001");
       writeU8(os, OPCODE_END, "END");
 
       // Calculate offset of function name
@@ -1384,11 +1384,11 @@ void Writer::createCallDispatchFunction() {
       }
 
       // Function name does not match any of available functions.
-      // Return -3.
+      // Return -10002.
       writeU8(OS, OPCODE_ELSE, "ELSE");
       writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
-      encodeSLEB128(-3, OS);
-      writeU8(OS, OPCODE_RETURN, "RETURN");
+      encodeSLEB128(-10002, OS);
+      writeU8(OS, OPCODE_RETURN, "RETURN -10002");
 
       for (int i=0; i < call_cnt; i++) {
          writeU8(OS, OPCODE_END, "END");
