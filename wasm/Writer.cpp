@@ -1261,7 +1261,7 @@ void Writer::createDispatchFunction() {
 // The parameters of sync_call() is `sender`, `receiver`, `data_size`
 void Writer::createCallDispatchFunction() {
    // Generate an `if` block for each method marked as `call`
-   auto create_if = [&](raw_string_ostream& os, std::string str, bool& need_else) {
+   auto create_if = [&](raw_string_ostream& os, std::string call_name, bool& need_else) {
       if (need_else) {
          writeU8(os, OPCODE_ELSE, "ELSE");
       }
@@ -1331,8 +1331,8 @@ void Writer::createCallDispatchFunction() {
       writeUleb128(os, 3, "align=8");
       writeUleb128(os, 0, "offset=0");
 
-      // Generate code to compare called function name with the function in `str`
-      uint64_t nm = eosio::cdt::string_to_name(str.substr(0, str.find(":")).c_str());
+      // Generate code to compare called function name with `call_name`
+      uint64_t nm = eosio::cdt::string_to_name(call_name.substr(0, call_name.find(":")).c_str());
       writeU8(os, OPCODE_I64_CONST, "I64 CONST");
       encodeSLEB128((int64_t)nm, os);
       writeU8(os, OPCODE_I64_EQ, "I64_EQ");
@@ -1349,18 +1349,18 @@ void Writer::createCallDispatchFunction() {
       writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
       writeUleb128(os, 3, "data");
       writeU8(os, OPCODE_CALL, "CALL");
-      auto func_sym = (FunctionSymbol*)symtab->find(str.substr(str.find(":")+1));
-      uint32_t index = func_sym->getFunctionIndex();
-      if (index >= 0)
-         writeUleb128(os, index, "index");
-      else
-         throw std::runtime_error("wasm_ld internal error function not found");
+      auto func_sym = (FunctionSymbol*)symtab->find(call_name.substr(call_name.find(":")+1));
+      if (func_sym) {
+         uint32_t index = func_sym->getFunctionIndex();
+         if (index < symtab->getSymbols().size()) {
+            writeUleb128(os, index, "index");
+         } else {
+            throw std::runtime_error("wasm_ld internal error sync call function index out of bound");
+         }
+      } else {
+         throw std::runtime_error("wasm_ld internal error sync call function not found");
+      }
    };
-
-   auto assert_sym = (FunctionSymbol*)symtab->find("eosio_assert_code");
-   uint32_t assert_idx = UINT32_MAX;
-   if (assert_sym)
-     assert_idx = assert_sym->getFunctionIndex();
 
    auto create_call_dispatch = [&](raw_string_ostream& OS) {
       // count how many total calls we have
