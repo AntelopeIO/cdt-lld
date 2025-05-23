@@ -721,6 +721,10 @@ static constexpr uint64_t EOSIO_ERROR_NO_ACTION     = EOSIO_COMPILER_ERROR_BASE;
 static constexpr uint64_t EOSIO_ERROR_ONERROR       = EOSIO_COMPILER_ERROR_BASE+1;
 static constexpr uint64_t EOSIO_CANARY_FAILURE      = EOSIO_COMPILER_ERROR_BASE+2;
 
+// Status resturned by sync call entry point indicates the call was executed
+// to the completion..
+static constexpr int64_t SYNC_CALL_EXECUTED = 0;
+
 // Error code returned by sync call entry point. Must be less or equal than -10000
 static constexpr int64_t SYNC_CALL_UNSUPPORTED_HEADER_VERSION = -10000;
 static constexpr int64_t SYNC_CALL_UNKNOWN_FUNCTION           = -10001;
@@ -1492,9 +1496,9 @@ void Writer::createCallDispatchFunction() {
          }
       }
 
-      // Return 0
+      // Return status indicating the call was executed
       writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
-      encodeSLEB128(0, OS);
+      encodeSLEB128(SYNC_CALL_EXECUTED, OS);
 
       writeU8(OS, OPCODE_END, "END");
    }
