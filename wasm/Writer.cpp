@@ -720,7 +720,10 @@ static constexpr uint64_t EOSIO_COMPILER_ERROR_BASE = 8000000000000000000ull;
 static constexpr uint64_t EOSIO_ERROR_NO_ACTION     = EOSIO_COMPILER_ERROR_BASE;
 static constexpr uint64_t EOSIO_ERROR_ONERROR       = EOSIO_COMPILER_ERROR_BASE+1;
 static constexpr uint64_t EOSIO_CANARY_FAILURE      = EOSIO_COMPILER_ERROR_BASE+2;
-static constexpr uint64_t EOSIO_ERROR_NO_CALL       = EOSIO_COMPILER_ERROR_BASE+3;
+
+// Error code returned by sync call entry point. Must be less or equal than -10000
+static constexpr int64_t SYNC_CALL_UNSUPPORTED_HEADER_VERSION = -10000;
+static constexpr int64_t SYNC_CALL_UNKNOWN_FUNCTION           = -10001;
 
 static void createFunction(DefinedFunction *func, StringRef bodyContent) {
   std::string functionBody;
@@ -1311,12 +1314,12 @@ void Writer::createCallDispatchFunction() {
       writeUleb128(os, 0, "offset=0");
 
       // Verify version is correct. Current version is 0.
-      // Return -10001 if version is not supported.
+      // Return SYNC_CALL_UNSUPPORTED_HEADER_VERSION if version is not supported.
       writeU8(os, OPCODE_IF, "IF version != 0");  // This block is executed only when the top of statck is non-zero
       writeU8(os, 0x40, "none");
       writeU8(os, OPCODE_I64_CONST, "I64.CONST");
-      encodeSLEB128(-10001, os);
-      writeU8(os, OPCODE_RETURN, "RETURN -10001");
+      encodeSLEB128(SYNC_CALL_UNSUPPORTED_HEADER_VERSION, os);
+      writeU8(os, OPCODE_RETURN, "RETURN SYNC_CALL_UNSUPPORTED_HEADER_VERSION");
       writeU8(os, OPCODE_END, "END");
 
       // Calculate offset of function name
@@ -1384,11 +1387,11 @@ void Writer::createCallDispatchFunction() {
       }
 
       // Function name does not match any of available functions.
-      // Return -10002.
+      // Return SYNC_CALL_UNKNOWN_FUNCTION.
       writeU8(OS, OPCODE_ELSE, "ELSE");
       writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
-      encodeSLEB128(-10002, OS);
-      writeU8(OS, OPCODE_RETURN, "RETURN -10002");
+      encodeSLEB128(SYNC_CALL_UNKNOWN_FUNCTION, OS);
+      writeU8(OS, OPCODE_RETURN, "RETURN SYNC_CALL_UNKNOWN_FUNCTION");
 
       for (int i=0; i < call_cnt; i++) {
          writeU8(OS, OPCODE_END, "END");
