@@ -1564,7 +1564,7 @@ void Writer::run(bool undefinedEntry) {
         break;
      }
   }
-  if (hasCalls) {
+  if (hasCalls && symtab->syncCallEntryIsUndefined) {
      createCallDispatchFunction(); // sync_call entry function
   }
 

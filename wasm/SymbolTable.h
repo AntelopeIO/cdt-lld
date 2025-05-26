@@ -43,6 +43,7 @@ public:
 
   std::set<StringRef> allowed;
   bool entryIsUndefined = true;
+  bool syncCallEntryIsUndefined = true;
 
   ArrayRef<Symbol *> getSymbols() const { return symVector; }
 

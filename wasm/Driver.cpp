@@ -769,11 +769,21 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
             config->entry);
   }
 
-  // Is the entry symbol found
   for (ObjFile *file : symtab->objectFiles) {
     for (Symbol *sym : file->getSymbols()) {
+       // Is the entry symbol found
        if (toString(*sym) == config->entry) {
           symtab->entryIsUndefined = false;
+       }
+
+       // Is sync_call entry symbol found
+       if (toString(*sym) == "sync_call") { // OK to hard code sync call entry here. Spring validate the entry function name to be "sync_call"
+          symtab->syncCallEntryIsUndefined = false;
+       }
+
+       if (symtab->entryIsUndefined && symtab->syncCallEntryIsUndefined) {
+          // No need to continue the loop if both are found
+          break;
        }
      }
   }
