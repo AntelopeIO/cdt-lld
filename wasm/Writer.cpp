@@ -1339,7 +1339,7 @@ void Writer::createCallDispatchFunction() {
       writeUleb128(os, 0, "offset=0");
 
       // Generate code to compare called function name with `call_name`
-      uint64_t nm = eosio::cdt::string_to_name(call_name.substr(0, call_name.find(":")).c_str());
+      uint64_t nm = eosio::cdt::identifier_to_id(call_name.substr(0, call_name.find(":")).c_str());
       writeU8(os, OPCODE_I64_CONST, "I64 CONST");
       encodeSLEB128((int64_t)nm, os);
       writeU8(os, OPCODE_I64_EQ, "I64_EQ");
