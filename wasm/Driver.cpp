@@ -781,7 +781,7 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
           symtab->syncCallEntryIsUndefined = false;
        }
 
-       if (symtab->entryIsUndefined && symtab->syncCallEntryIsUndefined) {
+       if (!symtab->entryIsUndefined && !symtab->syncCallEntryIsUndefined) {
           // No need to continue the loop if both are found
           break;
        }
