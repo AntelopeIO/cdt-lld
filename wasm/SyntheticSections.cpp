@@ -197,13 +197,15 @@ void FunctionSection::writeBody() {
   raw_ostream &os = bodyOutputStream;
 
   writeUleb128(os, inputFunctions.size(), "function count");
-  for (const InputFunction *func : inputFunctions)
+  for (const InputFunction *func : inputFunctions) {
     writeUleb128(os, out.typeSec->lookupType(func->signature), "sig index");
+  }
 }
 
 void FunctionSection::addFunction(InputFunction *func) {
-  if (!func->live)
+  if (!func->live) {
     return;
+  }
   uint32_t functionIndex =
       out.importSec->getNumImportedFunctions() + inputFunctions.size();
   inputFunctions.emplace_back(func);

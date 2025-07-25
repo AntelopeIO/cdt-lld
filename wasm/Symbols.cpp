@@ -29,6 +29,7 @@ DefinedFunction *WasmSym::initMemory;
 DefinedFunction *WasmSym::applyRelocs;
 DefinedFunction *WasmSym::initTLS;
 DefinedFunction *WasmSym::entryFunc;
+DefinedFunction *WasmSym::syncCallFunc;
 DefinedData *WasmSym::dsoHandle;
 DefinedData *WasmSym::dataEnd;
 DefinedData *WasmSym::globalBase;
