@@ -481,6 +481,10 @@ struct WasmSym {
   // entryFunc
   // Function that is the entry of the program
   static DefinedFunction* entryFunc;
+
+  // syncCallFunc
+  // Function that is the entry of sync calls
+  static DefinedFunction* syncCallFunc;
 };
 
 // A buffer class that is large enough to hold any Symbol-derived

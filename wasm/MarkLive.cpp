@@ -86,6 +86,8 @@ void lld::wasm::markLive() {
   if (config->isPic)
     enqueue(WasmSym::callCtors);
 
+  bool has_sync_calls = false;
+
   for (const ObjFile* obj : symtab->objectFiles) {
      const auto& wasmObj = obj->getWasmObj();
      for (const auto& func : wasmObj->functions()) {
@@ -100,6 +102,13 @@ void lld::wasm::markLive() {
               break;
            }
         }
+        for (const auto& call : wasmObj->calls()) {
+           if (func.SymbolName == call.substr(call.find(":")+1)) {
+              enqueue(symtab->find(func.SymbolName));
+              has_sync_calls = true;
+              break;
+           }
+        }
         for (const auto& notify : wasmObj->notify()) {
            std::string sub = notify.substr(notify.find(":")+2);
            if (func.SymbolName == sub.substr(sub.find(":")+1)) {
@@ -108,6 +117,13 @@ void lld::wasm::markLive() {
            }
         }
      }
+
+     if (has_sync_calls) {
+        enqueue(WasmSym::syncCallFunc);
+        enqueue(symtab->find("__eos_get_sync_call_data_"));
+        enqueue(symtab->find("__eos_get_sync_call_data_header_"));
+     }
+
      for (const auto& import : wasmObj->imports()) {
         if (import.Field == "__wasm_call_ctors" || import.Field == "__cxa_finalize" ||
             std::find(wasmObj->allowed_imports().begin(), wasmObj->allowed_imports().end(), import.Field) != wasmObj->allowed_imports().end()) {
@@ -159,9 +175,11 @@ void lld::wasm::markLive() {
         if (!e->live)
           message("removing unused section " + toString(e));
     }
-    for (InputChunk *c : symtab->syntheticFunctions)
-      if (!c->live)
+    for (InputChunk *c : symtab->syntheticFunctions) {
+      if (!c->live) {
         message("removing unused section " + toString(c));
+      }
+    }
     for (InputGlobal *g : symtab->syntheticGlobals)
       if (!g->live)
         message("removing unused section " + toString(g));
