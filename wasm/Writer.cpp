@@ -701,23 +701,33 @@ static constexpr int OPCODE_CALL       = 0x10;
 static constexpr int OPCODE_IF         = 0x4;
 static constexpr int OPCODE_ELSE       = 0x5;
 static constexpr int OPCODE_END        = 0xb;
+static constexpr int OPCODE_RETURN     = 0xf;
 static constexpr int OPCODE_GET_LOCAL  = 0x20;
 static constexpr int OPCODE_SET_LOCAL  = 0x21;
 static constexpr int OPCODE_GET_GLOBAL = 0x23;
 static constexpr int OPCODE_SET_GLOBAL = 0x24;
+static constexpr int OPCODE_I32_LOAD   = 0x28;
+static constexpr int OPCODE_I32_CONST  = 0x41;
+static constexpr int OPCODE_I32_ADD    = 0x6a;
+static constexpr int OPCODE_I32_TYPE   = 0x7f;
 static constexpr int OPCODE_I64_EQ     = 0x51;
 static constexpr int OPCODE_I64_NE     = 0x52;
-static constexpr int OPCODE_I32_CONST  = 0x41;
 static constexpr int OPCODE_I64_CONST  = 0x42;
 static constexpr int OPCODE_I64_STORE  = 0x37;
 static constexpr int OPCODE_I64_LOAD   = 0x29;
 static constexpr int OPCODE_I64_ADD    = 0x7c;
-static constexpr int OPCODE_I32_TYPE   = 0x7f;
 static constexpr uint64_t EOSIO_COMPILER_ERROR_BASE = 8000000000000000000ull;
 static constexpr uint64_t EOSIO_ERROR_NO_ACTION     = EOSIO_COMPILER_ERROR_BASE;
 static constexpr uint64_t EOSIO_ERROR_ONERROR       = EOSIO_COMPILER_ERROR_BASE+1;
 static constexpr uint64_t EOSIO_CANARY_FAILURE      = EOSIO_COMPILER_ERROR_BASE+2;
-static constexpr uint64_t EOSIO_ERROR_NO_CALL       = EOSIO_COMPILER_ERROR_BASE+3;
+
+// Status resturned by sync call entry point indicates the call was executed
+// to the completion..
+static constexpr int64_t SYNC_CALL_EXECUTED = 0;
+
+// Error code returned by sync call entry point. Must be less or equal than -10000
+static constexpr int64_t SYNC_CALL_UNSUPPORTED_HEADER_VERSION = -10000;
+static constexpr int64_t SYNC_CALL_UNKNOWN_FUNCTION           = -10001;
 
 static void createFunction(DefinedFunction *func, StringRef bodyContent) {
   std::string functionBody;
@@ -1258,7 +1268,7 @@ void Writer::createDispatchFunction() {
 // The parameters of sync_call() is `sender`, `receiver`, `data_size`
 void Writer::createCallDispatchFunction() {
    // Generate an `if` block for each method marked as `call`
-   auto create_if = [&](raw_string_ostream& os, std::string str, bool& need_else) {
+   auto create_if = [&](raw_string_ostream& os, std::string call_name, bool& need_else) {
       if (need_else) {
          writeU8(os, OPCODE_ELSE, "ELSE");
       }
@@ -1277,27 +1287,61 @@ void Writer::createCallDispatchFunction() {
       writeU8(os, OPCODE_CALL, "CALL");
       writeUleb128(os, get_call_data_idx, "get_call_data_idx");
 
-      // Store data into local_3
+      // Store data memory offset into local_3
       writeU8(os, OPCODE_SET_LOCAL, "SET_LOCAL");
       writeUleb128(os, 3, "data");
 
-      // Find the called function name from payload data
-      auto get_call_name_sym = (FunctionSymbol*)symtab->find("__eos_get_sync_call_func_name_");
-      uint32_t get_call_name_idx = UINT32_MAX;
-      if (get_call_name_sym) {
-         get_call_name_idx = get_call_name_sym->getFunctionIndex();
+      // Retrieve data header
+      auto get_header_sym = (FunctionSymbol*)symtab->find("__eos_get_sync_call_data_header_");
+      uint32_t get_header_idx = UINT32_MAX;
+      if (get_header_sym) {
+         get_header_idx = get_header_sym->getFunctionIndex();
       } else {
-         throw std::runtime_error("wasm_ld internal error: __eos_get_sync_call_func_name_ not found");
+         throw std::runtime_error("wasm_ld internal error: __eos_get_sync_call_data_header_ not found");
       }
       writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
       writeUleb128(os, 3, "data");
       writeU8(os, OPCODE_CALL, "CALL");
-      writeUleb128(os, get_call_name_idx, "get_call_name_idx");
+      writeUleb128(os, get_header_idx, "get_header_idx"); // returns header address in linear memory
 
-      // Generate code to compare called function name with the function in `str`
-      uint64_t nm = eosio::cdt::string_to_name(str.substr(0, str.find(":")).c_str());
+      // Store header address into local_4
+      writeU8(os, OPCODE_SET_LOCAL, "SET_LOCAL");
+      writeUleb128(os, 4, "header");
+
+      // Get header base address
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 4, "header");
+
+      // Load version
+      writeU8(os, OPCODE_I32_LOAD, "i32.load");
+      writeUleb128(os, 2, "align=4");
+      writeUleb128(os, 0, "offset=0");
+
+      // Verify version is correct. Current version is 0.
+      // Return SYNC_CALL_UNSUPPORTED_HEADER_VERSION if version is not supported.
+      writeU8(os, OPCODE_IF, "IF version != 0");  // This block is executed only when the top of statck is non-zero
+      writeU8(os, 0x40, "none");
+      writeU8(os, OPCODE_I64_CONST, "I64.CONST");
+      encodeSLEB128(SYNC_CALL_UNSUPPORTED_HEADER_VERSION, os);
+      writeU8(os, OPCODE_RETURN, "RETURN SYNC_CALL_UNSUPPORTED_HEADER_VERSION");
+      writeU8(os, OPCODE_END, "END");
+
+      // Calculate offset of function name
+      writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
+      writeUleb128(os, 4, "header");
+      writeU8(os, OPCODE_I32_CONST, "I32 CONST");
+      writeUleb128(os, 8, "8"); // function name is at offset 8
+      writeU8(os, OPCODE_I32_ADD, "i32.add"); // header address + 8
+
+      // Load function name
+      writeU8(os, OPCODE_I64_LOAD, "i64.load");
+      writeUleb128(os, 3, "align=8");
+      writeUleb128(os, 0, "offset=0");
+
+      // Generate code to compare called function name with `call_name`
+      uint64_t id = eosio::cdt::to_hash_id(call_name.substr(0, call_name.find(":")).c_str());
       writeU8(os, OPCODE_I64_CONST, "I64 CONST");
-      encodeSLEB128((int64_t)nm, os);
+      encodeSLEB128((int64_t)id, os);
       writeU8(os, OPCODE_I64_EQ, "I64_EQ");
       writeU8(os, OPCODE_IF, "IF call_name == name");
       writeU8(os, 0x40, "none");  // starts an empty block (does not have a return value)
@@ -1312,18 +1356,18 @@ void Writer::createCallDispatchFunction() {
       writeU8(os, OPCODE_GET_LOCAL, "GET_LOCAL");
       writeUleb128(os, 3, "data");
       writeU8(os, OPCODE_CALL, "CALL");
-      auto func_sym = (FunctionSymbol*)symtab->find(str.substr(str.find(":")+1));
-      uint32_t index = func_sym->getFunctionIndex();
-      if (index >= 0)
-         writeUleb128(os, index, "index");
-      else
-         throw std::runtime_error("wasm_ld internal error function not found");
+      auto func_sym = (FunctionSymbol*)symtab->find(call_name.substr(call_name.find(":")+1));
+      if (func_sym) {
+         uint32_t index = func_sym->getFunctionIndex();
+         if (index < symtab->getSymbols().size()) {
+            writeUleb128(os, index, "index");
+         } else {
+            throw std::runtime_error("wasm_ld internal error sync call function index out of bound");
+         }
+      } else {
+         throw std::runtime_error("wasm_ld internal error sync call function not found");
+      }
    };
-
-   auto assert_sym = (FunctionSymbol*)symtab->find("eosio_assert_code");
-   uint32_t assert_idx = UINT32_MAX;
-   if (assert_sym)
-     assert_idx = assert_sym->getFunctionIndex();
 
    auto create_call_dispatch = [&](raw_string_ostream& OS) {
       // count how many total calls we have
@@ -1346,19 +1390,12 @@ void Writer::createCallDispatchFunction() {
          throw std::runtime_error("wasm_ld internal error: call_cnt must be greater than 0");
       }
 
+      // Function name does not match any of available functions.
+      // Return SYNC_CALL_UNKNOWN_FUNCTION.
       writeU8(OS, OPCODE_ELSE, "ELSE");
-
-      if (assert_sym && assert_idx < symtab->getSymbols().size()) {
-        // assert that no matching sync call function was found
-        writeU8(OS, OPCODE_I32_CONST, "I32.CONST");
-        writeUleb128(OS, 0, "false");
-        writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
-        encodeSLEB128((int64_t)EOSIO_ERROR_NO_CALL, OS);
-        writeU8(OS, OPCODE_CALL, "CALL");
-        writeUleb128(OS, assert_idx, "code");
-      } else {
-         fatal("fatal failure: contract with no matching sync calls but does not have assert method to report");
-      }
+      writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
+      encodeSLEB128(SYNC_CALL_UNKNOWN_FUNCTION, OS);
+      writeU8(OS, OPCODE_RETURN, "RETURN SYNC_CALL_UNKNOWN_FUNCTION");
 
       for (int i=0; i < call_cnt; i++) {
          writeU8(OS, OPCODE_END, "END");
@@ -1369,9 +1406,10 @@ void Writer::createCallDispatchFunction() {
    {
       raw_string_ostream OS(BodyContent);
 
-      // Declare (local i32), whose index is 3, after parameters sender, receiver, and data_size
+      // Declare two i32 locals, whose indces starting from 3,
+      // after parameters sender, receiver, and data_size.
       writeUleb128(OS, 1, "num of local groups");
-      writeUleb128(OS, 1, "num of locals in group 1");
+      writeUleb128(OS, 2, "num of locals in group 1");
       writeU8(OS, OPCODE_I32_TYPE, "type of group 1 is i32");
 
       auto contract_sym = (FunctionSymbol*)symtab->find("eosio_set_contract_name");
@@ -1457,6 +1495,11 @@ void Writer::createCallDispatchFunction() {
             writeUleb128(OS, dtors_idx, "__cxa_finalize");
          }
       }
+
+      // Return status indicating the call was executed
+      writeU8(OS, OPCODE_I64_CONST, "I64.CONST");
+      encodeSLEB128(SYNC_CALL_EXECUTED, OS);
+
       writeU8(OS, OPCODE_END, "END");
    }
 
@@ -1521,7 +1564,7 @@ void Writer::run(bool undefinedEntry) {
         break;
      }
   }
-  if (hasCalls) {
+  if (hasCalls && symtab->syncCallEntryIsUndefined) {
      createCallDispatchFunction(); // sync_call entry function
   }
 

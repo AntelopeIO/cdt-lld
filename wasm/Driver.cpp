@@ -464,7 +464,7 @@ static void createSyntheticSymbols() {
                                                             true};
 
   static WasmSignature entrySignature = config->otherModel ? nullSignature : WasmSignature{{}, {ValType::I64, ValType::I64, ValType::I64}};
-  static WasmSignature syncCallSignature = WasmSignature{{}, {ValType::I64, ValType::I64, ValType::I32}}; // sender, recever, data_size
+  static WasmSignature syncCallSignature = WasmSignature{{ValType::I64}, {ValType::I64, ValType::I64, ValType::I32}}; // sender, recever, data_size
 
   if (!config->relocatable) {
     WasmSym::callCtors = symtab->addSyntheticFunction(
@@ -769,11 +769,21 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
             config->entry);
   }
 
-  // Is the entry symbol found
   for (ObjFile *file : symtab->objectFiles) {
     for (Symbol *sym : file->getSymbols()) {
+       // Is the entry symbol found
        if (toString(*sym) == config->entry) {
           symtab->entryIsUndefined = false;
+       }
+
+       // Is sync_call entry symbol found
+       if (toString(*sym) == "sync_call") { // OK to hard code sync call entry here. Spring validate the entry function name to be "sync_call"
+          symtab->syncCallEntryIsUndefined = false;
+       }
+
+       if (!symtab->entryIsUndefined && !symtab->syncCallEntryIsUndefined) {
+          // No need to continue the loop if both are found
+          break;
        }
      }
   }
