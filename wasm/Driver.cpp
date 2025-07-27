@@ -779,6 +779,7 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
        // Is sync_call entry symbol found
        if (toString(*sym) == "sync_call") { // OK to hard code sync call entry here. Spring validate the entry function name to be "sync_call"
           symtab->syncCallEntryIsUndefined = false;
+          sym->setHidden(false); // Unhide it such that it can be put in the export section
        }
 
        if (!symtab->entryIsUndefined && !symtab->syncCallEntryIsUndefined) {

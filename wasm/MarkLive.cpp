@@ -118,10 +118,15 @@ void lld::wasm::markLive() {
         }
      }
 
-     if (has_sync_calls) {
+     // If there are functions tagged as sync calls or customized
+     // sync call entry function is provided, mark relevant functions live
+     if (has_sync_calls || !symtab->syncCallEntryIsUndefined) {
         enqueue(WasmSym::syncCallFunc);
-        enqueue(symtab->find("__eos_get_sync_call_data_"));
-        enqueue(symtab->find("__eos_get_sync_call_data_header_"));
+
+        if (has_sync_calls) { // only required by generated sync call entry function
+           enqueue(symtab->find("__eos_get_sync_call_data_"));
+           enqueue(symtab->find("__eos_get_sync_call_data_header_"));
+        }
      }
 
      for (const auto& import : wasmObj->imports()) {
